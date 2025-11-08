@@ -5,5 +5,5 @@ setup(
     version="0.1",
     packages=find_packages(),
     install_requires=["click", "sqlalchemy"],
-    entry_points={"console_scripts": ["queuectl = flam.cli:cli"]},
+    entry_points={"console_scripts": ["queuectl = flam.cli:cli"]},  # works as a alias
 )
