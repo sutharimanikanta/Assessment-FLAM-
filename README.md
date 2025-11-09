@@ -105,7 +105,7 @@ For testing:
 ```bash
 pip install pytest
 ```
-Two-Terminal Architecture Explained
+### Two-Terminal Architecture Explained
 Why Your Queue System Needs Two Terminals
 Your background job queue system requires two separate terminals because it follows the client-server pattern where workers run as persistent background processes while you need an active terminal to issue commands.
 This is standard practice for all production job queue systems like:
@@ -826,3 +826,4 @@ This project is provided as-is for demonstration purposes.
 ## Support
 
 For questions or issues, please review the code documentation in `flam/` modules or extend the test suite to verify expected behavior.
+
