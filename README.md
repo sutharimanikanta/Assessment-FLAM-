@@ -105,47 +105,74 @@ For testing:
 ```bash
 pip install pytest
 ```
-### Two-Terminal Architecture Explained
-Why Your Queue System Needs Two Terminals
-Your background job queue system requires two separate terminals because it follows the client-server pattern where workers run as persistent background processes while you need an active terminal to issue commands.
-This is standard practice for all production job queue systems like:
 
-Celery (Python)
-Sidekiq (Ruby)
-Bull/BullMQ (Node.js)
-Redis Queue (RQ) (Python)
+### Initialize Database
 
+The database is automatically created on first CLI invocation:
 
-The Two-Terminal Model
-TerminalPurposeStatusTerminal ARuns the worker processes (background processors)Must stay open - Workers continuously poll for jobsTerminal BCommand center for job management (enqueue, status, DLQ, etc.)Interactive - Execute commands as needed
+```bash
+queuectl status
+```
 
-Why This Architecture is Necessary
-1. Workers Run in an Infinite Loop
+This creates `job.db` in the project root with the required schema.
+
+---
+
+## Two-Terminal Architecture
+
+### Why Your Queue System Needs Two Terminals
+
+Your background job queue system requires **two separate terminals** because it follows the **client-server pattern** where workers run as persistent background processes while you need an active terminal to issue commands.
+
+This is **standard practice** for all production job queue systems like:
+- **Celery** (Python)
+- **Sidekiq** (Ruby)
+- **Bull/BullMQ** (Node.js)
+- **Redis Queue (RQ)** (Python)
+
+### The Two-Terminal Model
+
+| Terminal | Purpose | Status |
+|----------|---------|--------|
+| **Terminal A** | Runs the worker processes (background processors) | **Must stay open** - Workers continuously poll for jobs |
+| **Terminal B** | Command center for job management (enqueue, status, DLQ, etc.) | Interactive - Execute commands as needed |
+
+### Why This Architecture is Necessary
+
+#### 1. Workers Run in an Infinite Loop
+
 When you start workers, they execute code like this:
-pythonwhile not _shutdown.is_set():
+
+```python
+while not _shutdown.is_set():
     job = claim_next_job(session)
     if job:
         execute(job)
     time.sleep(0.1)  # Poll every 100ms
-This blocks the terminal - you cannot type new commands while the loop is running.
-2. Workers Must Stay Alive to Process New Jobs
+```
+
+This **blocks the terminal** - you cannot type new commands while the loop is running.
+
+#### 2. Workers Must Stay Alive to Process New Jobs
+
 If workers stop, the queue becomes dormant:
+- New jobs you enqueue just sit in the database
+- Nothing processes them until workers restart
+- Defeats the purpose of a "background" job system
 
-New jobs you enqueue just sit in the database
-Nothing processes them until workers restart
-Defeats the purpose of a "background" job system
+#### 3. Real-Time Job Processing
 
-3. Real-Time Job Processing
 Workers need to continuously monitor the database so that:
+- Jobs are picked up **immediately** when enqueued
+- Retries happen at the scheduled time (`next_run_at`)
+- Multiple workers can process jobs concurrently
 
-Jobs are picked up immediately when enqueued
-Retries happen at the scheduled time (next_run_at)
-Multiple workers can process jobs concurrently
+### Step-by-Step Workflow
 
+#### Terminal A: Start Workers (Background Service)
 
-Step-by-Step Workflow
-Terminal A: Start Workers (Background Service)
-powershell# Activate environment
+```powershell
+# Activate environment
 & D:/Env/sql/Scripts/Activate.ps1
 
 # Start 2 worker processes
@@ -157,14 +184,25 @@ queuectl worker start --count 2
 Started 2 worker(s): [12345, 12346]
 [worker 12345] started. heartbeat=data/worker-12345.hb
 [worker 12346] started. heartbeat=data/worker-12346.hb
-This terminal is now "busy" - the workers are running and waiting for jobs. Keep it open!
+```
 
-Terminal B: Job Management (Command Center)
-Open a new PowerShell window and activate the same environment:
-powershell& D:/Env/sql/Scripts/Activate.ps1
+**This terminal is now "busy"** - the workers are running and waiting for jobs. **Keep it open!**
+
+---
+
+#### Terminal B: Job Management (Command Center)
+
+Open a **new PowerShell window** and activate the same environment:
+
+```powershell
+& D:/Env/sql/Scripts/Activate.ps1
+```
+
 Now you can freely execute commands:
-Enqueue Jobs
-powershellqueuectl enqueue --id job1 --command "timeout /T 2 /NOBREAK"
+
+**Enqueue Jobs**
+```powershell
+queuectl enqueue --id job1 --command "timeout /T 2 /NOBREAK"
 queuectl enqueue --id job2 --command "echo Processing..."
 ```
 
@@ -175,8 +213,11 @@ queuectl enqueue --id job2 --command "echo Processing..."
 [job job2] STDOUT:
 Processing...
 [worker 12346] job 'job2' -> completed
-Monitor System
-powershell# Check how many jobs are in each state
+```
+
+**Monitor System**
+```powershell
+# Check how many jobs are in each state
 queuectl status
 
 # List all pending jobs
@@ -184,20 +225,27 @@ queuectl list --state pending
 
 # See what's currently processing
 queuectl list --state processing
-Manage Failed Jobs
-powershell# View dead-letter queue
+```
+
+**Manage Failed Jobs**
+```powershell
+# View dead-letter queue
 queuectl dlq list
 
 # Retry a failed job
 queuectl dlq retry job_fail
-Configure System
-powershellqueuectl config set max-retries 5
+```
+
+**Configure System**
+```powershell
+queuectl config set max-retries 5
 queuectl config get backoff-base
 ```
 
 ---
 
-## Visual Architecture
+### Visual Architecture
+
 ```
 ┌───────────────────────────────────────────────────────┐
 │              Terminal A (Worker Process)              │
@@ -206,11 +254,11 @@ queuectl config get backoff-base
 │                                                       │
 │  [worker 12345] started...                            │
 │  [worker 12346] started...                            │
-│    Continuously polling database for jobs           │
-│    Executing commands as they arrive                │
-│    Writing heartbeat files every loop               │
+│  ⚙️  Continuously polling database for jobs           │
+│  ⚙️  Executing commands as they arrive                │
+│  ⚙️  Writing heartbeat files every loop               │
 │                                                       │
-│    BLOCKED - Cannot type new commands here          │
+│  ⏸️  BLOCKED - Cannot type new commands here          │
 └───────────────────────────────────────────────────────┘
                         ↕️
               SQLite Database (job.db)
@@ -219,7 +267,7 @@ queuectl config get backoff-base
 │              Terminal B (Control Plane)               │
 │                                                       │
 │  $ queuectl enqueue --id job1 --command "..."        │
-│   Enqueued job job1                                 │
+│  ✅ Enqueued job job1                                 │
 │                                                       │
 │  $ queuectl status                                    │
 │  Workers: 2 active                                    │
@@ -231,38 +279,37 @@ queuectl config get backoff-base
 │  $ queuectl dlq list                                  │
 │  job_fail | not_a_real_command | ...                  │
 │                                                       │
-│   FREE - Interactive command prompt available       │
+│  ✅ FREE - Interactive command prompt available       │
 └───────────────────────────────────────────────────────┘
+```
 
-Data Flow Example
-Timeline:
+### Data Flow Example
 
-T=0s (Terminal B): queuectl enqueue --id task1 --command "echo Start"
+**Timeline:**
 
-Job written to database with status='pending'
+1. **T=0s** (Terminal B): `queuectl enqueue --id task1 --command "echo Start"`
+   - Job written to database with `status='pending'`
 
+2. **T=0.1s** (Terminal A, Worker 12345):
+   - Polls database, finds `task1`
+   - Claims it (sets `status='processing'`)
+   - Executes: `echo Start`
+   - Prints output: `[job task1] STDOUT: Start`
+   - Marks as `status='completed'`
 
-T=0.1s (Terminal A, Worker 12345):
+3. **T=0.2s** (Terminal B): `queuectl status`
+   - Queries database
+   - Shows: `completed: 1`
 
-Polls database, finds task1
-Claims it (sets status='processing')
-Executes: echo Start
-Prints output: [job task1] STDOUT: Start
-Marks as status='completed'
+---
 
+### Stopping Workers Safely
 
-T=0.2s (Terminal B): queuectl status
+#### Option 1: Graceful Shutdown (Recommended)
 
-Queries database
-Shows: completed: 1
-
-
-
-
-Stopping Workers Safely
-Option 1: Graceful Shutdown (Recommended)
-From Terminal B:
-powershellqueuectl worker stop
+From **Terminal B**:
+```powershell
+queuectl worker stop
 ```
 
 **What happens:**
@@ -277,75 +324,89 @@ powershellqueuectl worker stop
 [worker 12346] stopped.
 ```
 
-### **Option 2: Force Kill**
+#### Option 2: Force Kill
 
 In **Terminal A**, press:
 ```
 Ctrl + C
-What happens:
+```
 
-Immediate shutdown (may interrupt jobs mid-execution)
-Jobs in processing state remain stuck
-Heartbeat files may not be cleaned up
+**What happens:**
+- Immediate shutdown (may interrupt jobs mid-execution)
+- Jobs in `processing` state remain stuck
+- Heartbeat files may not be cleaned up
 
+---
 
-Why Not Use Background Processes?
+### Why Not Use Background Processes?
+
 You might wonder: "Can't we just run workers in the background and use one terminal?"
-Answer: Yes, technically, but it complicates management:
-powershell# Start workers in background (Windows)
+
+**Answer:** Yes, technically, but it complicates management:
+
+```powershell
+# Start workers in background (Windows)
 Start-Job -ScriptBlock { queuectl worker start --count 2 }
-Problems:
+```
 
-Harder to see worker logs in real-time
-More complex to stop workers (need to track job IDs)
-No visibility into what's happening
-Loses educational value (can't see the queue in action)
+**Problems:**
+- Harder to see worker logs in real-time
+- More complex to stop workers (need to track job IDs)
+- No visibility into what's happening
+- Loses educational value (can't see the queue in action)
 
-For production: Use proper process managers like:
+**For production:** Use proper process managers like:
+- **Windows:** NSSM, Windows Services
+- **Linux:** systemd, supervisord, PM2
+- **Cloud:** Docker containers, Kubernetes pods
 
-Windows: NSSM, Windows Services
-Linux: systemd, supervisord, PM2
-Cloud: Docker containers, Kubernetes pods
+But for **development and testing**, two terminals is clearest.
 
-But for development and testing, two terminals is clearest.
+---
 
-Real-World Analogy
+### Real-World Analogy
+
 Think of it like a restaurant:
-ComponentRestaurant EquivalentWorkers (Terminal A)Kitchen staff - continuously working on ordersJob Queue (Database)Order tickets on the railCLI (Terminal B)Waitstaff taking new orders and checking order status
+
+| Component | Restaurant Equivalent |
+|-----------|----------------------|
+| **Workers (Terminal A)** | Kitchen staff - continuously working on orders |
+| **Job Queue (Database)** | Order tickets on the rail |
+| **CLI (Terminal B)** | Waitstaff taking new orders and checking order status |
+
 You need both:
+- **Kitchen staff** must keep working (can't stop to take orders)
+- **Waitstaff** must be free to interact with customers
 
-Kitchen staff must keep working (can't stop to take orders)
-Waitstaff must be free to interact with customers
+---
 
+### Common Mistakes
 
-Common Mistakes
- Mistake 1: Closing Terminal A
-powershell# Terminal A
+#### ❌ Mistake 1: Closing Terminal A
+```powershell
+# Terminal A
 queuectl worker start --count 2
-# User closes this terminal 
-Result: Workers killed → No job processing
-Mistake 2: Running Workers and Commands in Same Terminal
-powershellqueuectl worker start --count 2
+# User closes this terminal ❌
+```
+**Result:** Workers killed → No job processing
+
+#### ❌ Mistake 2: Running Workers and Commands in Same Terminal
+```powershell
+queuectl worker start --count 2
 # Terminal is now blocked...
-# Cannot type: queuectl status 
- Correct Approach
-powershell# Terminal A: Start workers (leave running)
+# Cannot type: queuectl status ❌
+```
+
+#### ✅ Correct Approach
+```powershell
+# Terminal A: Start workers (leave running)
 queuectl worker start --count 2
 
 # Terminal B: Execute commands freely
 queuectl enqueue --id job1 --command "..."
 queuectl status
 queuectl worker stop  # Stops workers in Terminal A
-
-### Initialize Database
-
-The database is automatically created on first CLI invocation:
-
-```bash
-queuectl status
 ```
-
-This creates `job.db` in the project root with the required schema.
 
 ---
 
@@ -826,4 +887,3 @@ This project is provided as-is for demonstration purposes.
 ## Support
 
 For questions or issues, please review the code documentation in `flam/` modules or extend the test suite to verify expected behavior.
-
