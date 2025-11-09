@@ -1,0 +1,31 @@
+# 1) Enqueue a new job
+queuectl enqueue --id job1 --command "timeout /T 2 /NOBREAK"
+
+# Or replace if job1 already exists:
+queuectl enqueue --id job1 --command "timeout /T 2 /NOBREAK" --replace
+
+# 2) Start 3 workers
+queuectl worker start --count 3
+
+# 3) Watch status
+queuectl status
+
+# 4) List jobs by state
+queuectl list --state pending
+queuectl list --state processing
+queuectl list --state completed
+queuectl list --state failed
+
+# 5) Stop workers (gracefully if possible)
+queuectl worker stop
+
+# 6) Dead Letter Queue (DLQ)
+queuectl dlq list
+queuectl dlq retry job1   # move back into queue
+
+# 7) Configuration
+queuectl config set max-retries 3
+queuectl config get max-retries
+
+# 8) Delete a stuck job so it can be re-enqueued cleanly
+queuectl jobs delete job1

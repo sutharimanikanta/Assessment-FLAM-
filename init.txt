@@ -1,0 +1,5 @@
+& D:/Env/sql/Scripts/Activate.ps1
+cd ..
+git push origin main
+pip install -e .
+pytest -s

@@ -1,0 +1,67 @@
+0) Ensure package is installed
+pip install -e .
+
+1) Basic Successful Job
+# enqueue a simple job
+queuectl enqueue --id job1 --command "timeout /T 2 /NOBREAK"
+
+# start workers
+queuectl worker start --count 2
+
+# observe status
+queuectl status
+queuectl list --state processing
+queuectl list --state completed
+
+2) Failed Job → Retry → Exponential Backoff
+# enqueue a job that will fail (invalid command)
+queuectl enqueue --id job_fail --command "not_a_real_command"
+
+# watch processing and retries happen
+queuectl status
+queuectl list --state failed   # after attempts > 0
+
+3) When Retries Exhaust → Move to DLQ
+# ensure retry settings
+queuectl config set max-retries 3
+queuectl config set backoff-base 2
+
+# wait until job_fail moves automatically to DLQ
+queuectl dlq list
+
+4) Retry a Job from DLQ
+queuectl dlq retry job_fail
+queuectl list --state pending   # job should reappear
+
+5) Test Multiple Workers (No Duplicate Processing)
+queuectl enqueue --id jobA --command "timeout /T 3 /NOBREAK"
+queuectl enqueue --id jobB --command "timeout /T 3 /NOBREAK"
+queuectl enqueue --id jobC --command "timeout /T 3 /NOBREAK"
+
+queuectl worker start --count 3
+queuectl status
+queuectl list --state processing
+
+
+Workers should process different jobs — no job should be processed twice.
+
+6) Persistence Across Restart
+# stop workers
+queuectl worker stop
+
+# restart workers
+queuectl worker start --count 2
+
+# verify jobs are still present
+queuectl list --state pending
+queuectl list --state completed
+queuectl dlq list
+
+
+Jobs must persist because SQLite is on disk (job.db).
+
+7) Delete a Stuck Job
+queuectl jobs delete jobA
+
+8) Final Stop
+queuectl worker stop
